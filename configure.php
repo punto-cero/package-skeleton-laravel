@@ -1,8 +1,15 @@
 #!/usr/bin/env php
 <?php
 
+// Global flag toggled by CLI options to drive non-interactive defaults
+$GLOBALS['__NON_INTERACTIVE__'] = false;
+
 function ask(string $question, string $default = ''): string
 {
+    if (!empty($GLOBALS['__NON_INTERACTIVE__'])) {
+        return $default;
+    }
+
     $answer = readline($question.($default ? " ({$default})" : null).': ');
 
     if (! $answer) {
@@ -14,6 +21,10 @@ function ask(string $question, string $default = ''): string
 
 function confirm(string $question, bool $default = false): bool
 {
+    if (!empty($GLOBALS['__NON_INTERACTIVE__'])) {
+        return $default;
+    }
+
     $answer = ask($question.' ('.($default ? 'Y/n' : 'y/N').')');
 
     if (! $answer) {
@@ -227,6 +238,23 @@ function guessGitHubUsername(): string
     return $remoteUrlParts[1] ?? '';
 }
 
+// Parse CLI options to support non-interactive usage and preset values
+$__cliOptions = getopt('', [
+    'name:',           // package name (required for non-interactive usage)
+    'description:',    // package description
+    'no-interaction',  // force non-interactive mode
+    'yes',             // assume yes to confirmations where defaults are yes
+]);
+
+$__providedPackageName = $__cliOptions['name'] ?? null;
+$__providedDescription = $__cliOptions['description'] ?? null;
+
+// Non-interactive when explicit flag, or when key inputs are provided
+$GLOBALS['__NON_INTERACTIVE__'] = isset($__cliOptions['no-interaction'])
+    || isset($__cliOptions['yes'])
+    || $__providedPackageName !== null
+    || $__providedDescription !== null;
+
 function guessGitHubVendorInfo($authorName, $username): array
 {
     $remoteUrl = shell_exec('git config remote.origin.url') ?? '';
@@ -245,38 +273,39 @@ function guessGitHubVendorInfo($authorName, $username): array
     return [$response->name ?? $authorName, $response->login ?? $username];
 }
 
-$gitName = run('git config user.name');
-$authorName = ask('Author name', $gitName);
 
-$gitEmail = run('git config user.email');
-$authorEmail = ask('Author email', $gitEmail);
-$authorUsername = ask('Author username', guessGitHubUsername());
+// Defaults tailored for preset usage
+$authorNameDefault = 'José Simón Rosendo';
+$authorEmailDefault = 'rosendojose0617@gmail.com';
+$authorUsernameDefault = 'rosendito';
 
-$guessGitHubVendorInfo = guessGitHubVendorInfo($authorName, $authorUsername);
+$authorName = ask('Author name', $authorNameDefault);
+$authorEmail = ask('Author email', $authorEmailDefault);
+$authorUsername = ask('Author username', $authorUsernameDefault);
 
-$vendorName = ask('Vendor name', $guessGitHubVendorInfo[0]);
-$vendorUsername = ask('Vendor username', $guessGitHubVendorInfo[1] ?? slugify($vendorName));
+// Vendor defaults (cero-stack)
+$vendorName = ask('Vendor name', 'cero-stack');
+$vendorUsername = ask('Vendor username', 'cero-stack');
 $vendorSlug = slugify($vendorUsername);
 
-$vendorNamespace = str_replace('-', '', ucwords($vendorName));
-$vendorNamespace = ask('Vendor namespace', $vendorNamespace);
+$vendorNamespace = ask('Vendor namespace', 'CeroStack');
 
 $currentDirectory = getcwd();
 $folderName = basename($currentDirectory);
 
-$packageName = ask('Package name', $folderName);
+$packageName = $__providedPackageName ?? ask('Package name', $folderName);
 $packageSlug = slugify($packageName);
 $packageSlugWithoutPrefix = remove_prefix('laravel-', $packageSlug);
 
 $className = title_case($packageName);
 $className = ask('Class name', $className);
 $variableName = lcfirst($className);
-$description = ask('Package description', "This is my package {$packageSlug}");
+$description = $__providedDescription ?? ask('Package description', "This is my package {$packageSlug}");
 
+// Tools and utilities enabled by default; confirmations will accept defaults
 $usePhpStan = confirm('Enable PhpStan?', true);
 $useLaravelPint = confirm('Enable Laravel Pint?', true);
 $useDependabot = confirm('Enable Dependabot?', true);
-$useLaravelRay = confirm('Use Ray for debugging?', true);
 $useUpdateChangelogWorkflow = confirm('Use automatic changelog updater workflow?', true);
 
 writeln('------');
@@ -290,7 +319,6 @@ writeln('Packages & Utilities');
 writeln('Use Laravel/Pint     : '.($useLaravelPint ? 'yes' : 'no'));
 writeln('Use Larastan/PhpStan : '.($usePhpStan ? 'yes' : 'no'));
 writeln('Use Dependabot       : '.($useDependabot ? 'yes' : 'no'));
-writeln('Use Ray App          : '.($useLaravelRay ? 'yes' : 'no'));
 writeln('Use Auto-Changelog   : '.($useUpdateChangelogWorkflow ? 'yes' : 'no'));
 writeln('------');
 
@@ -357,14 +385,10 @@ if (! $useDependabot) {
     safeUnlink(__DIR__.'/.github/workflows/dependabot-auto-merge.yml');
 }
 
-if (! $useLaravelRay) {
-    remove_composer_deps(['spatie/laravel-ray']);
-}
+// No Ray support
 
 if (! $useUpdateChangelogWorkflow) {
     safeUnlink(__DIR__.'/.github/workflows/update-changelog.yml');
 }
-
-confirm('Execute `composer install` and run tests?') && run('composer install && composer test');
 
 confirm('Let this script delete itself?', true) && unlink(__FILE__);
